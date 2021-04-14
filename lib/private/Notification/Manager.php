@@ -27,6 +27,7 @@ declare(strict_types=1);
 
 namespace OC\Notification;
 
+use OC\AppFramework\Bootstrap\Coordinator;
 use OCP\AppFramework\QueryException;
 use OCP\ILogger;
 use OCP\Notification\AlreadyProcessedException;
@@ -43,6 +44,8 @@ class Manager implements IManager {
 	protected $validator;
 	/** @var ILogger */
 	protected $logger;
+	/** @var Coordinator */
+	private $coordinator;
 
 	/** @var IApp[] */
 	protected $apps;
@@ -60,9 +63,12 @@ class Manager implements IManager {
 	protected $deferPushing;
 
 	public function __construct(IValidator $validator,
-								ILogger $logger) {
+								ILogger $logger,
+								Coordinator $coordinator) {
 		$this->validator = $validator;
 		$this->logger = $logger;
+		$this->coordinator = $coordinator;
+
 		$this->apps = [];
 		$this->notifiers = [];
 		$this->appClasses = [];
@@ -141,7 +147,7 @@ class Manager implements IManager {
 	 * @return INotifier[]
 	 */
 	public function getNotifiers(): array {
-		if (empty($this->notifierClasses)) {
+		if (!empty($this->notifiers)) {
 			return $this->notifiers;
 		}
 
@@ -158,6 +164,28 @@ class Manager implements IManager {
 
 			if (!($notifier instanceof INotifier)) {
 				$this->logger->error('Notification notifier class ' . $notifierClass . ' is not implementing ' . INotifier::class, [
+					'app' => 'notifications',
+				]);
+				continue;
+			}
+
+			$this->notifiers[] = $notifier;
+		}
+
+		$notifierServices = $this->coordinator->getRegistrationContext()->getNotifierServices();
+		foreach ($notifierServices as $notifierService) {
+			try {
+				$notifier = \OC::$server->query($notifierService->getService());
+			} catch (QueryException $e) {
+				$this->logger->logException($e, [
+					'message' => 'Failed to load notification notifier class: ' . $notifierService->getService(),
+					'app' => 'notifications',
+				]);
+				continue;
+			}
+
+			if (!($notifier instanceof INotifier)) {
+				$this->logger->error('Notification notifier class ' . $notifierService->getService() . ' is not implementing ' . INotifier::class, [
 					'app' => 'notifications',
 				]);
 				continue;
